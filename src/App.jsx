@@ -2,14 +2,17 @@ import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import protomap from "./assets/protomap.json";
-import routesGeoJSON from "./assets/metro_routes.json"; 
+import routesGeoJSON from "./assets/metro_routes.json";
+import Sidebar from "./components/Sidebar";
+import StopPopup from "./components/StopPopup";
+
 const BASE_URL = "https://svc.metrotransit.org";
 
 export default function App() {
   const mapContainer = useRef(null);
   const map = useRef(null);
-  const vehicleMarkersRef = useRef({});
-  const stopMarkersRef = useRef({});
+  const vehicleMarkersRef = useRef([]);
+  const stopMarkersRef = useRef([]);
   const vehiclesIntervalRef = useRef(null);
   const routeLineRef = useRef(null);
 
@@ -19,7 +22,7 @@ export default function App() {
   const [selectedDirection, setSelectedDirection] = useState(null);
   const [loadingRoutes, setLoadingRoutes] = useState(true);
 
-  // Initialize MapLibre
+  // Initialize map
   useEffect(() => {
     if (!mapContainer.current) return;
 
@@ -35,7 +38,7 @@ export default function App() {
     return () => map.current.remove();
   }, []);
 
-  // Fetch all routes
+  // Fetch routes
   useEffect(() => {
     const fetchRoutes = async () => {
       try {
@@ -51,7 +54,7 @@ export default function App() {
     fetchRoutes();
   }, []);
 
-  // Fetch directions when a route is expanded
+  // Fetch directions
   useEffect(() => {
     if (!expandedRouteId) return;
 
@@ -69,23 +72,14 @@ export default function App() {
         console.error(err);
       }
 
-      // Clear previous markers and route line
-      Object.values(vehicleMarkersRef.current).forEach((m) => m.remove());
-      vehicleMarkersRef.current = {};
-      Object.values(stopMarkersRef.current).forEach((m) => m.remove());
-      stopMarkersRef.current = {};
-
-      if (routeLineRef.current && map.current.getLayer("route-line")) {
-        map.current.removeLayer("route-line");
-        map.current.removeSource("route-line");
-        routeLineRef.current = null;
-      }
+      // clear old map data
+      clearAllMapElements();
     };
 
     fetchDirections();
   }, [expandedRouteId]);
 
-  // Fetch vehicles every 10s for the selected route & direction
+  // Vehicles refresh
   useEffect(() => {
     if (!selectedDirection || !expandedRouteId || !map.current) return;
 
@@ -96,7 +90,7 @@ export default function App() {
         );
         const vehicles = await res.json();
 
-        // Remove old vehicle markers
+        // clear old vehicle markers
         Object.values(vehicleMarkersRef.current).forEach((m) => m.remove());
         vehicleMarkersRef.current = {};
 
@@ -106,13 +100,39 @@ export default function App() {
             const lat = parseFloat(bus.latitude);
             const lng = parseFloat(bus.longitude);
             if (!isNaN(lat) && !isNaN(lng)) {
-              const marker = new maplibregl.Marker({ color: "red" })
+              const el = document.createElement("div");
+              el.className = 'marker-bus';
+              el.style.width = "32px";
+              el.style.height = "32px";
+              el.style.backgroundColor = "#007bff";
+              el.style.border = "2px solid white";
+              el.style.borderRadius = "50%";
+              el.style.display = "flex";
+              el.style.alignItems = "center";
+              el.style.justifyContent = "center";
+              el.style.boxShadow = "0 0 3px rgba(0,0,0,0.5)";
+              el.style.color = "white";
+              el.style.fontSize = "18px";
+              el.style.fontWeight = "bold";
+              el.style.cursor = "pointer";
+              el.style.userSelect = "none";
+              el.textContent = "🚌";
+              el.style.zIndex = "2";
+
+              const popup = new maplibregl.Popup({ offset: 25 }).setHTML(
+                `<b>Bus ID:</b> ${bus.trip_id}<br/><b>Route:</b> ${bus.route_id}<br/><b>Direction:</b> ${bus.direction}`
+              );
+
+              popup.on('open', () => {
+                const popupEl = popup.getElement();
+                if (popupEl) {
+                  popupEl.style.zIndex = '10';
+                }
+              });
+
+              const marker = new maplibregl.Marker({ element: el })
                 .setLngLat([lng, lat])
-                .setPopup(
-                  new maplibregl.Popup({ offset: 25 }).setHTML(
-                    `<b>Bus ID:</b> ${bus.trip_id}<br/><b>Route:</b> ${bus.route_id}<br/><b>Direction:</b> ${bus.direction}`
-                  )
-                )
+                .setPopup(popup)
                 .addTo(map.current);
 
               vehicleMarkersRef.current[bus.trip_id] = marker;
@@ -123,202 +143,113 @@ export default function App() {
       }
     };
 
-    // Initial fetch
     fetchVehicles();
-
-    // Clear previous interval
     if (vehiclesIntervalRef.current) clearInterval(vehiclesIntervalRef.current);
-
-    // Set interval
     vehiclesIntervalRef.current = setInterval(fetchVehicles, 10000);
 
     return () => clearInterval(vehiclesIntervalRef.current);
   }, [selectedDirection, expandedRouteId]);
 
-  // Handle direction button click
-  const handleDirectionClick = async (direction) => {
-    setSelectedDirection(direction);
-
-    if (!map.current) return;
-
-    // Clear old markers
+  // helper
+  const clearAllMapElements = () => {
     Object.values(vehicleMarkersRef.current).forEach((m) => m.remove());
     vehicleMarkersRef.current = {};
-    Object.values(stopMarkersRef.current).forEach((m) => m.remove());
-    stopMarkersRef.current = {};
-
-    // Remove old route line
+    stopMarkersRef.current.forEach(marker => marker.remove());
+    stopMarkersRef.current = [];
     if (routeLineRef.current && map.current.getLayer("route-line")) {
       map.current.removeLayer("route-line");
       map.current.removeSource("route-line");
       routeLineRef.current = null;
     }
+  };
 
+  // when direction selected
+  const handleDirectionClick = async (direction) => {
+    setSelectedDirection(direction);
+    if (!map.current) return;
+
+    clearAllMapElements();
+
+    const routeGeo = routesGeoJSON.features.find(
+      (r) => r.properties.route_id === expandedRouteId
+    );
+
+    if (routeGeo && routeGeo.geometry) {
+      map.current.addSource("route-line", { type: "geojson", data: routeGeo });
+      map.current.addLayer({
+        id: "route-line",
+        type: "line",
+        source: "route-line",
+        layout: { "line-join": "round", "line-cap": "round" },
+        paint: { "line-color": "red", "line-width": 4, "line-opacity": 0.8 },
+      });
+      routeLineRef.current = "route-line";
+
+      const bounds = new maplibregl.LngLatBounds();
+      routeGeo.geometry.coordinates.forEach((coord) => bounds.extend(coord));
+      map.current.fitBounds(bounds, { padding: 50 });
+    }
+
+    // fetch stops
     try {
-      // Fetch stops for this route + direction
       const stopsRes = await fetch(
         `${BASE_URL}/NexTrip/Stops/${expandedRouteId}/${direction.direction_id}?format=json`
       );
       const stops = await stopsRes.json();
 
       for (const stop of stops) {
-        // Get stop details with coordinates
         const stopDetailRes = await fetch(
           `${BASE_URL}/NexTrip/${expandedRouteId}/${direction.direction_id}/${stop.place_code}?format=json`
         );
         const stopDetail = await stopDetailRes.json();
         const stopData = stopDetail.stops[0];
-
         if (stopData && stopData.latitude && stopData.longitude) {
-          // Custom div for stop marker
+          const popupHTML = StopPopup({ stopData, stopDetail });
+
           const el = document.createElement("div");
+          el.className = 'marker-stop';
           el.style.width = "12px";
           el.style.height = "12px";
           el.style.border = "2px solid white";
           el.style.borderRadius = "50%";
-          el.style.backgroundColor = "blue";
+          el.style.backgroundColor = "red";
           el.style.boxShadow = "0 0 2px rgba(0,0,0,0.5)";
+          el.style.zIndex = "1";
 
-          // Build departures HTML
-          let departuresHtml = "";
-          if (stopDetail.departures && stopDetail.departures.length > 0) {
-            departuresHtml = "<ul style='padding-left:15px;margin:0;'>";
-            stopDetail.departures.slice(0, 5).forEach((dep) => {
-              departuresHtml += `<li>${dep.departure_text} → ${dep.description}</li>`;
-            });
-            departuresHtml += "</ul>";
-          } else {
-            departuresHtml = "<i>No upcoming departures</i>";
-          }
+          const popup = new maplibregl.Popup({ offset: 25 }).setHTML(popupHTML);
+          
+          popup.on('open', () => {
+            const popupEl = popup.getElement();
+            if (popupEl) {
+              popupEl.style.zIndex = '10';
+            }
+          });
 
-          const marker = new maplibregl.Marker({ element: el })
+          const marker = new maplibregl.Marker({ color: "#007bffff", element: el })
             .setLngLat([stopData.longitude, stopData.latitude])
-            .setPopup(
-              new maplibregl.Popup({ offset: 25 }).setHTML(
-                `<b>Stop:</b> ${stopData.description}<br/><b>Next departures:</b>${departuresHtml}`
-              )
-            )
+            .setPopup(popup)
             .addTo(map.current);
 
-          stopMarkersRef.current[stopData.place_code] = marker;
+          stopMarkersRef.current.push(marker);
         }
       }
-
-      // Show route geometry
-      const routeGeo = routesGeoJSON.features.find(
-        (r) => r.properties.route_id === expandedRouteId
-      );
-      if (routeGeo && routeGeo.geometry) {
-        map.current.addSource("route-line", {
-          type: "geojson",
-          data: routeGeo,
-        });
-
-        map.current.addLayer({
-          id: "route-line",
-          type: "line",
-          source: "route-line",
-          layout: { "line-join": "round", "line-cap": "round" },
-          paint: { "line-color": "#FF0000", "line-width": 4, "line-opacity": 0.8 },
-        });
-
-        routeLineRef.current = "route-line";
-
-        // Fit map to route
-        const bounds = new maplibregl.LngLatBounds();
-        routeGeo.geometry.coordinates.forEach((coord) => bounds.extend(coord));
-        map.current.fitBounds(bounds, { padding: 50 });
-      }
     } catch (err) {
-      console.error("Error fetching stops or route:", err);
+      console.error("Error fetching stops:", err);
     }
   };
 
   return (
     <div style={{ display: "flex", height: "100vh" }}>
-      {/* Sidebar */}
-      <div
-        style={{
-          width: "300px",
-          padding: "10px",
-          borderRight: "1px solid #ccc",
-          overflowY: "auto",
-        }}
-      >
-        <h2>Metro Transit Routes</h2>
-        {loadingRoutes ? (
-          <p>Loading routes...</p>
-        ) : (
-          routes.map((route) => (
-            <div key={route.route_id} style={{ marginBottom: "5px" }}>
-              {/* Route Button */}
-              <button
-                onClick={() =>
-                  setExpandedRouteId(
-                    expandedRouteId === route.route_id ? null : route.route_id
-                  )
-                }
-                style={{
-                  width: "100%",
-                  padding: "8px",
-                  background:
-                    expandedRouteId === route.route_id ? "#007bff" : "#eee",
-                  color: expandedRouteId === route.route_id ? "#fff" : "#000",
-                  border: "none",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                  textAlign: "left",
-                }}
-              >
-                {route.route_label}
-              </button>
-
-              {/* Direction buttons */}
-              {expandedRouteId === route.route_id && directions.length > 0 && (
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    marginTop: "5px",
-                    paddingLeft: "10px",
-                  }}
-                >
-                  {directions.map((dir) => (
-                    <button
-                      key={dir.direction_id}
-                      onClick={() => handleDirectionClick(dir)}
-                      style={{
-                        marginTop: "3px",
-                        padding: "6px",
-                        background:
-                          selectedDirection?.direction_id === dir.direction_id
-                            ? "#28a745"
-                            : "#ddd",
-                        color:
-                          selectedDirection?.direction_id === dir.direction_id
-                            ? "#fff"
-                            : "#000",
-                        border: "none",
-                        borderRadius: "4px",
-                        cursor: "pointer",
-                        textAlign: "left",
-                      }}
-                    >
-                      {dir.direction_name}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))
-        )}
-      </div>
-
-      {/* Map */}
-      <div
-        ref={mapContainer}
-        style={{ flex: 1, width: "100%", height: "100%" }}
-      ></div>
+      <Sidebar
+        routes={routes}
+        loadingRoutes={loadingRoutes}
+        expandedRouteId={expandedRouteId}
+        setExpandedRouteId={setExpandedRouteId}
+        directions={directions}
+        selectedDirection={selectedDirection}
+        onDirectionClick={handleDirectionClick}
+      />
+      <div ref={mapContainer} style={{ flex: 1, width: "100%", height: "100%" }} />
     </div>
   );
 }

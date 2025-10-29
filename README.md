@@ -4,4 +4,5 @@ This web app is made to easily track Metro Transit trains and buses while using 
 
 LINK: [benatfroemming.github.io/metrotransit](https://benatfroemming.github.io/metrotransit/)
 
-<img width="1917" height="902" alt="image" src="https://github.com/user-attachments/assets/2a1f009b-5034-4213-9c65-7be9c633dbef" />
+<img width="1914" height="910" alt="image" src="https://github.com/user-attachments/assets/f060e8d0-bdeb-4d43-a1e7-93b3a8e56340" />
+

@@ -65,9 +65,7 @@ We predict using the trained model and visualize the results.
 
 Math representation of prediction:
 
-$$
-\hat{y} = \theta_0 + \theta_1 X
-$$
+$$\hat{y} = \theta_0 + \theta_1 X$$
 where $\theta_0$ is the intercept and $\theta_1$ is the slope.
 
 ```python
